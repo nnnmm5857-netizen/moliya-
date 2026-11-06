@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Moliya – shaxsiy hisob</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>tailwind.config={theme:{extend:{colors:{bg:'var(--bg)',card:'var(--card)',ink:'var(--ink)',mut:'var(--mut)',line:'var(--line)',inc:'var(--inc)',exp:'var(--exp)',acc:'var(--acc)'}}}}</script>
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--ink:#0f172a;--mut:#64748b;--line:#e2e8f0;--inc:#16a34a;--exp:#dc2626;--acc:#4f46e5;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0f17;--card:#141a26;--ink:#e8edf6;--mut:#8b97ab;--line:#243044;--inc:#34d399;--exp:#f87171;--acc:#818cf8;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0b0f17;--card:#141a26;--ink:#e8edf6;--mut:#8b97ab;--line:#243044;--inc:#34d399;--exp:#f87171;--acc:#818cf8;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+.fade{animation:fade .25s ease}.slide{animation:slide .28s ease}
+@keyframes fade{from{opacity:0}to{opacity:1}}@keyframes slide{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
+.bar{transition:width .6s ease}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const {useState,useEffect,useRef,useMemo}=React;
+const html=htm.bind(React.createElement);
+const CATS=['Oziq-ovqat','Transport','Ta’lim','Xaridlar','Ko‘ngilochar','Salomatlik','Kommunal','Boshqa'];
+const INC=['Maosh','Cho‘ntak puli','Sovg‘a','Boshqa daromad'];
+const EMO={'Oziq-ovqat':'🍽️','Transport':'🚌','Ta’lim':'📚','Xaridlar':'🛍️','Ko‘ngilochar':'🎬','Salomatlik':'💊','Kommunal':'💡','Boshqa':'📦','Maosh':'💼','Cho‘ntak puli':'👛','Sovg‘a':'🎁','Boshqa daromad':'💰'};
+const COL=['#6366f1','#22c55e','#f59e0b','#ef4444','#06b6d4','#ec4899','#8b5cf6','#94a3b8'];
+const MON=['Yan','Fev','Mar','Apr','May','Iyn','Iyl','Avg','Sen','Okt','Noy','Dek'];
+const QUICK=[['Avtobus',2500,'Transport'],['Kofe',15000,'Oziq-ovqat'],['Taksi',25000,'Transport'],['Somsa',18000,'Oziq-ovqat']];
+const PER={daily:'Har kuni',weekly:'Har hafta',monthly:'Har oy'};
+const pad=n=>String(n).padStart(2,'0');
+const ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const today=()=>ymd(new Date());
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const digits=v=>String(v).replace(/\D/g,'');
+const nf=v=>String(v||'').replace(/\B(?=(\d{3})+(?!\d))/g,'\u00a0');
+const fmt=n=>nf(Math.round(n))+'\u00a0so‘m';
+const dm=d=>d.split('-').reverse().join('.');
+const hm=iso=>new Date(iso).toTimeString().slice(0,5);
+const sum=(l,t)=>l.reduce((a,x)=>x.type===t?a+x.amount:a,0);
+const inp='w-full rounded-xl border border-line bg-bg px-3 py-2.5 outline-none focus:border-acc';
+const btn='rounded-xl bg-acc text-white font-semibold px-4 py-2.5 active:scale-95 transition disabled:opacity-50';
+const card='rounded-2xl bg-card border border-line p-4';
+
+// ---- Saqlash qatlami: keyinchalik backend/baza bilan almashtiriladi ----
+const KEY='moliya.v1';
+const DEF={initial:null,txs:[],budget:0,goal:null,rec:[],theme:null};
+const Store={
+  load(){try{return {...DEF,...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch(e){return {...DEF}}},
+  save(s){try{localStorage.setItem(KEY,JSON.stringify(s))}catch(e){}}
+};
+
+// ---- Hisob-kitob ----
+function calc(s){
+  const t=today(),m=t.slice(0,7);let inc=0,exp=0,td=0,mo=0;
+  for(const x of s.txs){
+    if(x.type==='inc')inc+=x.amount;
+    else{exp+=x.amount;if(x.date===t)td+=x.amount;if(x.date.slice(0,7)===m)mo+=x.amount}
+  }
+  return {inc,exp,td,mo,bal:(s.initial||0)+inc-exp};
+}
+function nextDate(d,p){const x=new Date(d+'T00:00:00');if(p==='daily')x.setDate(x.getDate()+1);else if(p==='weekly')x.setDate(x.getDate()+7);else x.setMonth(x.getMonth()+1);return ymd(x)}
+function runRecurring(s){
+  const t=today(),add=[];
+  const rec=s.rec.map(r=>{let n=r.next;while(n<=t){add.push({id:uid(),type:'exp',name:r.name,amount:r.amount,cat:r.cat,date:n,at:new Date().toISOString(),note:'Takroriy to‘lov',rid:r.id});n=nextDate(n,r.period)}return {...r,next:n}});
+  return add.length?{...s,rec,txs:[...s.txs,...add]}:s;
+}
+function series(txs,mode){
+  const out=[],now=new Date(),n=mode==='kun'?7:6;
+  for(let i=n-1;i>=0;i--){
+    let a,b,label;
+    if(mode==='kun'){const d=new Date(now);d.setDate(d.getDate()-i);a=b=ymd(d);label=pad(d.getDate())+'.'+pad(d.getMonth()+1)}
+    else if(mode==='hafta'){const e=new Date(now);e.setDate(e.getDate()-i*7);const s=new Date(e);s.setDate(s.getDate()-6);a=ymd(s);b=ymd(e);label=pad(s.getDate())+'.'+pad(s.getMonth()+1)}
+    else{const d=new Date(now.getFullYear(),now.getMonth()-i,1),p=ymd(d).slice(0,7);a=p+'-01';b=p+'-31';label=MON[d.getMonth()]}
+    out.push({label,v:txs.reduce((acc,x)=>x.type==='exp'&&x.date>=a&&x.date<=b?acc+x.amount:acc,0)});
+  }
+  return out;
+}
+
+// ---- Umumiy komponentlar ----
+function Cv({type,data,options,th}){
+  const ref=useRef(),ch=useRef();
+  useEffect(()=>{
+    const cs=getComputedStyle(document.documentElement);
+    Chart.defaults.color=cs.getPropertyValue('--mut').trim();
+    Chart.defaults.borderColor=cs.getPropertyValue('--line').trim();
+    ch.current&&ch.current.destroy();
+    ch.current=new Chart(ref.current,{type,data,options:{responsive:true,maintainAspectRatio:false,...options}});
+    return()=>ch.current&&ch.current.destroy();
+  },[JSON.stringify(data),type,th]);
+  return html`<div style=${{height:220}}><canvas ref=${ref}></canvas></div>`;
+}
+function Sheet({title,onClose,children}){
+  return html`<div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 fade" onClick=${onClose}>
+    <div className="w-full sm:max-w-md max-h-[92%] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-card p-5 slide" style=${{paddingBottom:'calc(1.25rem + env(safe-area-inset-bottom,0px))'}} onClick=${e=>e.stopPropagation()}>
+      <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold">${title}</h3><button onClick=${onClose} className="text-mut text-2xl leading-none px-2">×</button></div>
+      ${children}
+    </div></div>`;
+}
+function Field({label,err,children}){return html`<label className="block mb-3"><span className="text-sm text-mut">${label}</span>${children}${err&&html`<span className="text-sm text-exp">${err}</span>`}</label>`}
+
+function TxForm({init,onSave,onClose}){
+  const [f,setF]=useState({type:'exp',name:'',cat:CATS[0],date:today(),note:'',...init,amount:init&&init.amount?String(init.amount):''});
+  const [err,setErr]=useState({}),busy=useRef(false);
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const setType=t=>setF(p=>({...p,type:t,cat:(t==='exp'?CATS:INC)[0]}));
+  const submit=e=>{
+    e.preventDefault();if(busy.current)return;
+    const a=parseInt(digits(f.amount)||'0',10),er={};
+    if(!f.name.trim())er.name='Nomini kiriting';
+    if(!(a>0))er.amount='Summani to‘g‘ri kiriting';
+    else if(a>1e12)er.amount='Summa juda katta';
+    if(!f.date)er.date='Sanani tanlang';
+    setErr(er);if(Object.keys(er).length)return;
+    busy.current=true;
+    onSave({...f,name:f.name.trim(),note:f.note.trim(),amount:a,id:f.id||uid(),at:f.at||new Date().toISOString()});
+  };
+  const tb=t=>'flex-1 rounded-xl py-2 font-semibold transition '+(f.type===t?(t==='exp'?'bg-exp text-white':'bg-inc text-white'):'bg-bg text-mut');
+  return html`<${Sheet} title=${f.id?'Amalni tahrirlash':'Yangi amal'} onClose=${onClose}>
+    <form onSubmit=${submit}>
+      <div className="flex gap-2 mb-4"><button type="button" className=${tb('exp')} onClick=${()=>setType('exp')}>Xarajat</button><button type="button" className=${tb('inc')} onClick=${()=>setType('inc')}>Daromad</button></div>
+      <${Field} label="Nomi" err=${err.name}><input className=${inp} value=${f.name} onInput=${e=>set('name',e.target.value)} placeholder=${f.type==='exp'?'Masalan: Kofe':'Masalan: Maosh'}/><//>
+      <${Field} label="Summa (so‘m)" err=${err.amount}><input className=${inp} inputMode="numeric" value=${nf(f.amount)} onInput=${e=>set('amount',digits(e.target.value))} placeholder="0"/><//>
+      <div className="grid grid-cols-2 gap-3">
+        <${Field} label="Kategoriya"><select className=${inp} value=${f.cat} onChange=${e=>set('cat',e.target.value)}>${(f.type==='exp'?CATS:INC).map(c=>html`<option key=${c}>${c}</option>`)}</select><//>
+        <${Field} label="Sana" err=${err.date}><input type="date" className=${inp} value=${f.date} onChange=${e=>set('date',e.target.value)}/><//>
+      </div>
+      <${Field} label="Izoh (ixtiyoriy)"><input className=${inp} value=${f.note} onInput=${e=>set('note',e.target.value)}/><//>
+      <button type="submit" className=${btn+' w-full mt-2'}>Saqlash</button>
+    </form><//>`;
+}
+
+function TxRow({x,onEdit,onDel}){
+  const inc=x.type==='inc';
+  return html`<div className=${card+' flex items-center gap-3 !p-3 fade'}>
+    <div className="text-2xl">${EMO[x.cat]||'💸'}</div>
+    <div className="min-w-0 flex-1"><div className="font-semibold truncate">${x.name}</div>
+      <div className="text-xs text-mut truncate">${inc?'Daromad':'Xarajat'} · ${x.cat} · ${dm(x.date)} ${hm(x.at)}${x.note?' · '+x.note:''}</div></div>
+    <div className=${'font-bold whitespace-nowrap '+(inc?'text-inc':'text-exp')}>${inc?'+':'−'}${fmt(x.amount)}</div>
+    ${onEdit&&html`<div className="flex flex-col gap-1"><button onClick=${()=>onEdit(x)} className="text-sm">✏️</button><button onClick=${()=>onDel(x)} className="text-sm">🗑️</button></div>`}
+  </div>`;
+}
+const Empty=({t})=>html`<div className="text-center text-mut py-10 fade"><div className="text-4xl mb-2">🗒️</div>${t}</div>`;
+
+// ---- Sahifalar ----
+function Home({s,c,onQuick,onEdit,onDel,onGoal,go}){
+  const pct=s.budget?Math.round(c.mo/s.budget*100):0,g=s.goal,gp=g?Math.min(100,Math.round(g.saved/g.target*100)):0;
+  const [add,setAdd]=useState('');
+  const stat=(l,v,cl)=>html`<div className=${card+' !p-3'}><div className="text-xs text-mut">${l}</div><div className=${'font-bold text-sm mt-1 '+(cl||'')}>${v}</div></div>`;
+  const bc=pct>=100?'#dc2626':pct>=80?'#f59e0b':'#22c55e';
+  const recent=[...s.txs].sort((a,b)=>(b.date+b.at).localeCompare(a.date+a.at)).slice(0,5);
+  return html`<div className="space-y-4 fade">
+    <div className="rounded-3xl p-5 text-white shadow-lg" style=${{background:'linear-gradient(135deg,#4f46e5,#7c3aed)'}}><div className="text-sm opacity-80">Joriy balans</div><div className="text-3xl sm:text-4xl font-extrabold mt-1">${fmt(c.bal)}</div></div>
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">${stat('Boshlang‘ich balans',fmt(s.initial))}${stat('Jami daromad',fmt(c.inc),'text-inc')}${stat('Jami xarajat',fmt(c.exp),'text-exp')}${stat('Bugungi xarajat',fmt(c.td),'text-exp')}${stat('Oylik xarajat',fmt(c.mo),'text-exp')}</div>
+    <div className=${card}><div className="font-semibold mb-2">Tezkor xarajat</div><div className="flex flex-wrap gap-2">${QUICK.map(q=>html`<button key=${q[0]} onClick=${()=>onQuick({name:q[0],amount:q[1],cat:q[2]})} className="rounded-full border border-line bg-bg px-3 py-1.5 text-sm active:scale-95 transition">${q[0]} · ${fmt(q[1])}</button>`)}</div></div>
+    <div className=${card}><div className="flex justify-between mb-2"><span className="font-semibold">Oylik byudjet</span>${s.budget>0&&html`<span className="text-sm text-mut">${pct}%</span>`}</div>
+      ${s.budget>0?html`<div className="h-3 rounded-full bg-bg overflow-hidden"><div className="bar h-full rounded-full" style=${{width:Math.min(100,pct)+'%',background:bc}}></div></div>
+        <div className="flex justify-between text-sm mt-2"><span>Sarflandi: <b>${fmt(c.mo)}</b></span><span>Qoldi: <b>${fmt(Math.max(0,s.budget-c.mo))}</b></span></div>
+        ${pct>=80&&html`<div className=${'mt-3 rounded-xl p-3 text-sm font-medium '+(pct>=100?'bg-exp/10 text-exp':'bg-amber-500/10 text-amber-500')}>${pct>=100?'⛔ Oylik byudjetdan oshib ketdingiz!':'⚠️ Diqqat: byudjetning '+pct+'% i sarflandi.'}</div>`}`
+      :html`<div className="text-sm text-mut">Byudjet belgilanmagan. <button className="text-acc font-semibold" onClick=${()=>go('set')}>Belgilash</button></div>`}</div>
+    ${g&&html`<div className=${card}><div className="flex justify-between mb-2"><span className="font-semibold">🎯 ${g.name}</span><span className="text-sm text-mut">${gp}%</span></div>
+      <div className="h-3 rounded-full bg-bg overflow-hidden"><div className="bar h-full rounded-full bg-acc" style=${{width:gp+'%'}}></div></div>
+      <div className="text-sm mt-2">${fmt(g.saved)} / ${fmt(g.target)} · Qoldi: <b>${fmt(Math.max(0,g.target-g.saved))}</b></div>
+      <div className="flex gap-2 mt-3"><input className=${inp} inputMode="numeric" placeholder="Jamg‘armaga qo‘shish" value=${nf(add)} onInput=${e=>setAdd(digits(e.target.value))}/><button className=${btn} onClick=${()=>{const a=parseInt(add||'0',10);if(a>0){onGoal(a);setAdd('')}}}>+</button></div></div>`}
+    <div><div className="flex justify-between items-center mb-2"><h3 className="font-semibold">So‘nggi amallar</h3><button className="text-acc text-sm font-semibold" onClick=${()=>go('hist')}>Barchasi</button></div>
+      <div className="space-y-2">${recent.length?recent.map(x=>html`<${TxRow} key=${x.id} x=${x} onEdit=${onEdit} onDel=${onDel}/>`):html`<${Empty} t="Hozircha amallar yo‘q. “+” tugmasi bilan qo‘shing."/>`}</div></div>
+  </div>`;
+}
+
+function History({txs,onEdit,onDel}){
+  const [q,setQ]=useState(''),[cat,setCat]=useState(''),[type,setType]=useState(''),[date,setDate]=useState(''),[sort,setSort]=useState('new');
+  const list=useMemo(()=>{
+    const l=txs.filter(x=>(!q||x.name.toLowerCase().includes(q.toLowerCase()))&&(!cat||x.cat===cat)&&(!type||x.type===type)&&(!date||x.date===date)).sort((a,b)=>(a.date+a.at).localeCompare(b.date+b.at));
+    return sort==='new'?l.reverse():l;
+  },[txs,q,cat,type,date,sort]);
+  const all=[...new Set([...CATS,...INC])];
+  return html`<div className="space-y-3 fade">
+    <input className=${inp} placeholder="🔍 Nom bo‘yicha qidirish" value=${q} onInput=${e=>setQ(e.target.value)}/>
+    <div className="grid grid-cols-2 gap-2">
+      <select className=${inp} value=${type} onChange=${e=>setType(e.target.value)}><option value="">Barcha turlar</option><option value="inc">Daromad</option><option value="exp">Xarajat</option></select>
+      <select className=${inp} value=${cat} onChange=${e=>setCat(e.target.value)}><option value="">Barcha kategoriyalar</option>${all.map(c=>html`<option key=${c}>${c}</option>`)}</select>
+      <input type="date" className=${inp} value=${date} onChange=${e=>setDate(e.target.value)}/>
+      <select className=${inp} value=${sort} onChange=${e=>setSort(e.target.value)}><option value="new">Avval yangilari</option><option value="old">Avval eskilari</option></select>
+    </div>
+    ${(q||cat||type||date)&&html`<button className="text-acc text-sm font-semibold" onClick=${()=>{setQ('');setCat('');setType('');setDate('')}}>Filtrlarni tozalash</button>`}
+    <div className="space-y-2">${list.length?list.map(x=>html`<${TxRow} key=${x.id} x=${x} onEdit=${onEdit} onDel=${onDel}/>`):html`<${Empty} t=${txs.length?'Hech narsa topilmadi.':'Hozircha amallar yo‘q.'}/>`}</div>
+  </div>`;
+}
+
+function Stats({txs,th}){
+  const [mode,setMode]=useState('kun'),[m,setM]=useState(today().slice(0,7));
+  const ser=series(txs,mode),mt=txs.filter(x=>x.date.slice(0,7)===m),inc=sum(mt,'inc'),exp=sum(mt,'exp');
+  const ti=sum(txs,'inc'),te=sum(txs,'exp'),mx=Math.max(ti,te,1);
+  const by=CATS.map((c,i)=>({c,i,v:mt.reduce((a,x)=>x.type==='exp'&&x.cat===c?a+x.amount:a,0)})).filter(r=>r.v>0).sort((a,b)=>b.v-a.v);
+  const sh=d=>{const [y,mo]=m.split('-').map(Number);setM(ymd(new Date(y,mo-1+d,1)).slice(0,7))};
+  const [y,mo]=m.split('-').map(Number);
+  const tick=v=>v>=1e6?v/1e6+'M':v>=1e3?v/1e3+'k':v;
+  const mb=k=>'flex-1 rounded-lg py-1.5 text-sm font-medium '+(mode===k?'bg-acc text-white':'bg-bg text-mut');
+  const row=(l,v,w,cl)=>html`<div className="mb-3"><div className="flex justify-between text-sm mb-1"><span>${l}</span><b>${fmt(v)}</b></div><div className="h-3 rounded-full bg-bg overflow-hidden"><div className="bar h-full rounded-full" style=${{width:w+'%',background:cl}}></div></div></div>`;
+  return html`<div className="space-y-4 fade">
+    <div className=${card}><div className="font-semibold mb-3">Xarajatlar dinamikasi</div>
+      <div className="flex gap-2 mb-3"><button className=${mb('kun')} onClick=${()=>setMode('kun')}>Kunlik</button><button className=${mb('hafta')} onClick=${()=>setMode('hafta')}>Haftalik</button><button className=${mb('oy')} onClick=${()=>setMode('oy')}>Oylik</button></div>
+      <${Cv} th=${th} type="bar" data=${{labels:ser.map(r=>r.label),datasets:[{data:ser.map(r=>r.v),backgroundColor:'#6366f1',borderRadius:6}]}} options=${{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(c.parsed.y)}}},scales:{y:{beginAtZero:true,ticks:{callback:tick}},x:{grid:{display:false}}}}}/></div>
+    <div className=${card}><div className="font-semibold mb-3">Jami daromad va xarajat</div>${row('Daromad',ti,ti/mx*100,'#22c55e')}${row('Xarajat',te,te/mx*100,'#ef4444')}</div>
+    <div className=${card}><div className="flex items-center justify-between mb-3"><button className="px-3 text-xl" onClick=${()=>sh(-1)}>‹</button><div className="font-semibold">Oylik hisobot · ${MON[mo-1]} ${y}</div><button className="px-3 text-xl" onClick=${()=>sh(1)}>›</button></div>
+      <div className="grid grid-cols-3 gap-2 text-center mb-4"><div><div className="text-xs text-mut">Daromad</div><div className="font-bold text-inc text-sm">${fmt(inc)}</div></div><div><div className="text-xs text-mut">Xarajat</div><div className="font-bold text-exp text-sm">${fmt(exp)}</div></div><div><div className="text-xs text-mut">Qolgan</div><div className=${'font-bold text-sm '+(inc-exp>=0?'text-inc':'text-exp')}>${fmt(inc-exp)}</div></div></div>
+      ${by.length?html`<${Cv} th=${th} type="doughnut" data=${{labels:by.map(r=>r.c),datasets:[{data:by.map(r=>r.v),backgroundColor:by.map(r=>COL[r.i]),borderWidth:0}]}} options=${{cutout:'65%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.label+': '+fmt(c.parsed)}}}}}/>
+        <div className="mt-3 space-y-2">${by.map(r=>html`<div key=${r.c} className="flex items-center gap-2 text-sm"><span className="w-3 h-3 rounded-full" style=${{background:COL[r.i]}}></span><span className="flex-1">${r.c}</span><span className="text-mut">${fmt(r.v)}</span><b className="w-12 text-right">${Math.round(r.v/exp*100)}%</b></div>`)}</div>`
+      :html`<${Empty} t="Bu oyda xarajat yo‘q."/>`}</div>
+  </div>`;
+}
+
+function Settings({s,setS,flash,onReset,onExport}){
+  const [ini,setIni]=useState(String(s.initial||'')),[bud,setBud]=useState(String(s.budget||''));
+  const [gn,setGn]=useState(s.goal?s.goal.name:''),[gt,setGt]=useState(s.goal?String(s.goal.target):'');
+  const [r,setR]=useState({name:'',amount:'',cat:CATS[1],period:'daily',next:today()});
+  const num=v=>parseInt(digits(v)||'0',10);
+  const money=(v,fn,ph)=>html`<input className=${inp} inputMode="numeric" placeholder=${ph} value=${nf(v)} onInput=${e=>fn(digits(e.target.value))}/>`;
+  const dark=(s.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))==='dark';
+  const addRec=()=>{
+    const a=num(r.amount);
+    if(!r.name.trim()||!(a>0))return flash('Nom va summani kiriting');
+    setS(p=>runRecurring({...p,rec:[...p.rec,{id:uid(),name:r.name.trim(),amount:a,cat:r.cat,period:r.period,next:r.next||today()}]}));
+    setR({...r,name:'',amount:''});flash('Takroriy to‘lov qo‘shildi');
+  };
+  return html`<div className="space-y-4 fade">
+    <div className=${card}><div className="font-semibold mb-2">Boshlang‘ich balans</div><div className="flex gap-2">${money(ini,setIni,'0')}<button className=${btn} onClick=${()=>{setS(p=>({...p,initial:num(ini)}));flash('Saqlandi')}}>Saqlash</button></div><div className="text-xs text-mut mt-2">Amallar tarixi o‘zgarmaydi, balans qayta hisoblanadi.</div></div>
+    <div className=${card}><div className="font-semibold mb-2">Oylik byudjet</div><div className="flex gap-2">${money(bud,setBud,'Masalan: 1 000 000')}<button className=${btn} onClick=${()=>{setS(p=>({...p,budget:num(bud)}));flash('Byudjet saqlandi')}}>Saqlash</button></div></div>
+    <div className=${card}><div className="font-semibold mb-2">🎯 Jamg‘arma maqsadi</div><input className=${inp+' mb-2'} placeholder="Maqsad nomi (masalan: Noutbuk)" value=${gn} onInput=${e=>setGn(e.target.value)}/>
+      <div className="flex gap-2">${money(gt,setGt,'Maqsad summasi')}<button className=${btn} onClick=${()=>{if(!gn.trim()||!(num(gt)>0))return flash('Nom va summani kiriting');setS(p=>({...p,goal:{name:gn.trim(),target:num(gt),saved:p.goal?p.goal.saved:0}}));flash('Maqsad saqlandi')}}>Saqlash</button></div>
+      ${s.goal&&html`<button className="text-exp text-sm mt-2" onClick=${()=>{setS(p=>({...p,goal:null}));setGn('');setGt('')}}>Maqsadni o‘chirish</button>`}</div>
+    <div className=${card}><div className="font-semibold mb-2">🔁 Takroriy xarajatlar</div>
+      ${s.rec.map(x=>html`<div key=${x.id} className="flex items-center justify-between text-sm py-2 border-b border-line"><div><b>${x.name}</b> · ${fmt(x.amount)}<div className="text-xs text-mut">${PER[x.period]} · keyingisi: ${dm(x.next)}</div></div><button onClick=${()=>setS(p=>({...p,rec:p.rec.filter(y=>y.id!==x.id)}))}>🗑️</button></div>`)}
+      <div className="space-y-2 mt-3"><input className=${inp} placeholder="Nomi (Avtobus, Internet...)" value=${r.name} onInput=${e=>setR({...r,name:e.target.value})}/>${money(r.amount,v=>setR({...r,amount:v}),'Summa')}
+        <div className="grid grid-cols-2 gap-2"><select className=${inp} value=${r.cat} onChange=${e=>setR({...r,cat:e.target.value})}>${CATS.map(c=>html`<option key=${c}>${c}</option>`)}</select><select className=${inp} value=${r.period} onChange=${e=>setR({...r,period:e.target.value})}>${Object.keys(PER).map(k=>html`<option key=${k} value=${k}>${PER[k]}</option>`)}</select></div>
+        <input type="date" className=${inp} value=${r.next} onChange=${e=>setR({...r,next:e.target.value})}/><button className=${btn+' w-full'} onClick=${addRec}>Qo‘shish</button></div></div>
+    <div className=${card+' space-y-2'}><button className=${inp+' text-left'} onClick=${()=>setS(p=>({...p,theme:dark?'light':'dark'}))}>${dark?'☀️ Yorug‘ rejim':'🌙 Qorong‘i rejim'}</button><button className=${inp+' text-left'} onClick=${onExport}>📄 Tarixni CSV ga yuklab olish</button><button className=${inp+' text-left text-exp'} onClick=${onReset}>♻️ Barcha ma’lumotlarni tozalash</button></div>
+  </div>`;
+}
+
+function Onboarding({onDone}){
+  const [v,setV]=useState('');
+  return html`<div className="min-h-screen flex items-center justify-center p-6 fade"><div className=${card+' w-full max-w-sm text-center'}>
+    <div className="text-5xl mb-3">💰</div><h1 className="text-2xl font-bold">Xush kelibsiz!</h1><p className="text-mut mt-2 mb-4">Hozir qancha pulingiz bor? Bu boshlang‘ich balans bo‘ladi.</p>
+    <input className=${inp+' text-center text-xl'} inputMode="numeric" placeholder="200 000" value=${nf(v)} onInput=${e=>setV(digits(e.target.value))}/>
+    <button className=${btn+' w-full mt-3'} onClick=${()=>onDone(parseInt(v||'0',10))}>Boshlash</button></div></div>`;
+}
+
+function App(){
+  const [s,setS]=useState(()=>runRecurring(Store.load()));
+  const [tab,setTab]=useState('home'),[form,setForm]=useState(null),[conf,setConf]=useState(null),[toast,setToast]=useState('');
+  useEffect(()=>Store.save(s),[s]);
+  useEffect(()=>{const d=document.documentElement;if(s.theme)d.dataset.theme=s.theme;else delete d.dataset.theme},[s.theme]);
+  const flash=m=>{setToast(m);setTimeout(()=>setToast(''),2500)};
+  const c=calc(s);
+  if(s.initial===null)return html`<${Onboarding} onDone=${v=>setS(p=>({...p,initial:v}))}/>`;
+  const saveTx=t=>{setS(p=>({...p,txs:[...p.txs.filter(x=>x.id!==t.id),t]}));setForm(null);flash(t.type==='inc'?'Daromad qo‘shildi ✅':'Xarajat saqlandi ✅')};
+  const askDel=x=>setConf({text:'“'+x.name+'” amalini o‘chirasizmi? Balans qayta hisoblanadi.',yes:()=>{setS(p=>({...p,txs:p.txs.filter(y=>y.id!==x.id)}));flash('O‘chirildi')}});
+  const addGoal=a=>setS(p=>({...p,goal:{...p.goal,saved:p.goal.saved+a}}));
+  const exportCsv=async()=>{
+    if(!s.txs.length)return flash('Eksport uchun amallar yo‘q');
+    const q=v=>'"'+String(v).replace(/"/g,'""')+'"';
+    const csv='\ufeff'+['Sana,Vaqt,Tur,Nom,Kategoriya,Summa,Izoh',...[...s.txs].sort((a,b)=>(a.date+a.at).localeCompare(b.date+b.at)).map(x=>[x.date,hm(x.at),x.type==='inc'?'Daromad':'Xarajat',x.name,x.cat,x.amount,x.note||''].map(q).join(','))].join('\n');
+    try{const d=window.claude&&await window.claude.use('downloads');if(!d)return flash('Yuklab olish bu yerda mavjud emas');await d.save({filename:'moliya-'+today()+'.csv',data:csv});flash('Fayl saqlandi')}catch(e){if(!e||e.code!=='declined')flash('Saqlab bo‘lmadi')}
+  };
+  const dark=(s.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))==='dark';
+  const tabs=[['home','🏠','Bosh sahifa'],['hist','🧾','Tarix'],['stat','📊','Statistika'],['set','⚙️','Sozlamalar']];
+  return html`<div className="max-w-2xl mx-auto px-4 pt-4 pb-32">
+    <div className="flex items-center justify-between mb-4"><h1 className="text-xl font-extrabold">💰 Moliya</h1><button onClick=${()=>setS(p=>({...p,theme:dark?'light':'dark'}))} className="rounded-full bg-card border border-line w-10 h-10">${dark?'☀️':'🌙'}</button></div>
+    ${tab==='home'&&html`<${Home} s=${s} c=${c} go=${setTab} onQuick=${p=>setForm(p)} onEdit=${setForm} onDel=${askDel} onGoal=${addGoal}/>`}
+    ${tab==='hist'&&html`<${History} txs=${s.txs} onEdit=${setForm} onDel=${askDel}/>`}
+    ${tab==='stat'&&html`<${Stats} txs=${s.txs} th=${dark}/>`}
+    ${tab==='set'&&html`<${Settings} key=${s.initial+'-'+s.txs.length} s=${s} setS=${setS} flash=${flash} onExport=${exportCsv} onReset=${()=>setConf({text:'Barcha ma’lumotlar (balans, amallar, byudjet) butunlay o‘chiriladi. Davom etasizmi?',yes:()=>{setS({...DEF,theme:s.theme});setTab('home')}})}/>`}
+    <button onClick=${()=>setForm({})} className="fixed right-4 z-40 w-14 h-14 rounded-full bg-acc text-white text-3xl shadow-xl active:scale-90 transition" style=${{bottom:'calc(76px + env(safe-area-inset-bottom,0px))'}}>+</button>
+    <nav className="fixed bottom-0 inset-x-0 z-30 bg-card border-t border-line" style=${{paddingBottom:'env(safe-area-inset-bottom,0px)'}}><div className="max-w-2xl mx-auto grid grid-cols-4">${tabs.map(t=>html`<button key=${t[0]} onClick=${()=>setTab(t[0])} className=${'py-2.5 text-xs transition '+(tab===t[0]?'text-acc font-bold':'text-mut')}><div className="text-xl">${t[1]}</div>${t[2]}</button>`)}</div></nav>
+    ${form&&html`<${TxForm} key=${form.id||'new'} init=${form} onSave=${saveTx} onClose=${()=>setForm(null)}/>`}
+    ${conf&&html`<${Sheet} title="Tasdiqlang" onClose=${()=>setConf(null)}><p className="mb-4">${conf.text}</p><div className="flex gap-2"><button className=${btn+' flex-1 !bg-bg !text-ink border border-line'} onClick=${()=>setConf(null)}>Bekor qilish</button><button className=${btn+' flex-1 !bg-exp'} onClick=${()=>{conf.yes();setConf(null)}}>Ha, davom etish</button></div><//>`}
+    ${toast&&html`<div className="fixed left-1/2 -translate-x-1/2 z-50 rounded-full bg-ink text-bg px-4 py-2 text-sm fade" style=${{bottom:'calc(150px + env(safe-area-inset-bottom,0px))'}}>${toast}</div>`}
+  </div>`;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${App}/>`);
+</script>
+</body>
+</html>
